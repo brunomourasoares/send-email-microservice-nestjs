@@ -1,0 +1,69 @@
+services:
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: email-service-kafka-dev
+    user: root
+    ports:
+      - "9092:29092"
+    environment:
+      CLUSTER_ID: email-service-dev-cluster
+    volumes:
+      - ./docker/kafka/server.properties:/mnt/shared/config/server.properties
+      - kafka_dev_data:/tmp/kraft-combined-logs
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "kafka:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  kafka-init:
+    image: apache/kafka:3.9.0
+    container_name: email-service-kafka-init-dev
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "Creating Kafka topics..."
+
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
+          --create --if-not-exists --topic send-email \
+          --partitions 1 --replication-factor 1 \
+          --config retention.ms=604800000
+
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
+          --create --if-not-exists --topic send-email-retry \
+          --partitions 1 --replication-factor 1 \
+          --config retention.ms=1800000
+
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
+          --create --if-not-exists --topic send-email-dlq \
+          --partitions 1 --replication-factor 1 \
+          --config retention.ms=2592000000
+
+        echo "All topics created."
+    restart: "no"
+
+  smtp4dev:
+    image: rnwood/smtp4dev:3.3.2
+    container_name: email-service-smtp4dev
+    ports:
+      - "25:25"
+      - "5000:8080"
+    environment:
+      ServerOptions__Hostname: smtp4dev
+      ServerOptions__AllowRemoteConnections: "true"
+    volumes:
+      - smtp4dev_data:/smtp4dev
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  kafka_dev_data:
+  smtp4dev_data:

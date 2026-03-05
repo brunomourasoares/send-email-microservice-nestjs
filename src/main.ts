@@ -1,25 +1,22 @@
 import { profile } from './shared/config/profile';
 import { NestFactory } from '@nestjs/core';
 import { AppModule, buildKafkaMicroserviceOptions } from './app.module';
-import { INestMicroservice, Logger } from '@nestjs/common';
-import { KafkaOptions } from '@nestjs/microservices';
+import { INestApplication, Logger } from '@nestjs/common';
 import { AppConfigService } from './shared/config/app-config.service';
 
 async function bootstrap(): Promise<void> {
   const logger: Logger = new Logger('Bootstrap');
   logger.log(`Starting application with profile: ${profile}`);
 
-  const appContext = await NestFactory.createApplicationContext(AppModule);
-  const config: AppConfigService = appContext.get(AppConfigService);
-  await appContext.close();
+  const app: INestApplication = await NestFactory.create(AppModule, {
+    logger: false,
+  });
 
-  const app: INestMicroservice =
-    await NestFactory.createMicroservice<KafkaOptions>(
-      AppModule,
-      buildKafkaMicroserviceOptions(config),
-    );
+  const config: AppConfigService = app.get(AppConfigService);
 
-  await app.listen();
+  app.connectMicroservice(buildKafkaMicroserviceOptions(config));
+
+  await app.startAllMicroservices();
   logger.log('Microservice is listening');
 }
 
