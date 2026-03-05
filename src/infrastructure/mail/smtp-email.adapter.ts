@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { EmailSenderPort } from '../../domain/ports/email-sender.port';
-import type { MailConfig } from './mail-config.interface';
+import type { MailConfig } from './mail.config';
+import { MAIL_CONFIG } from './mail.config.token';
 import { Email } from '../../domain/entities/email.entity';
 import { EmailSendFailedError } from '../../domain/errors/email-send-failed.error';
 import nodemailer, { SentMessageInfo, Transporter } from 'nodemailer';
@@ -11,23 +12,23 @@ export class SmtpEmailAdapter implements EmailSenderPort, OnModuleInit {
   private readonly transporter: Transporter<SentMessageInfo>;
 
   constructor(
-    @Inject('MAIL_CONFIG')
+    @Inject(MAIL_CONFIG)
     private readonly config: MailConfig,
   ) {
-    const port: number = parseInt(String(this.config.port), 10);
+    const port: number = this.config.port;
     const secure: boolean = port === 465;
+    const ignoreTls: boolean = this.config.ignoreTls;
 
     this.transporter = nodemailer.createTransport({
       host: this.config.host,
       port,
       secure,
-      auth: {
-        user: this.config.user,
-        pass: this.config.pass,
-      },
-      tls: {
-        rejectUnauthorized: true,
-      },
+      ignoreTLS: ignoreTls,
+      auth:
+        this.config.user && this.config.pass
+          ? { user: this.config.user, pass: this.config.pass }
+          : undefined,
+      tls: ignoreTls ? undefined : { rejectUnauthorized: true },
     });
   }
 

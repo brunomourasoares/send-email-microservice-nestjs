@@ -2,33 +2,12 @@ import { EmailConsumer } from './email.consumer';
 import { SendEmailUseCase } from '../../application/use-cases/send-email.use-case';
 import { KafkaDlqProducer } from '../../infrastructure/kafka/kafka-dlq.producer';
 import { KafkaContext } from '@nestjs/microservices';
-import { KAFKA_TOPICS } from '../../shared/kafka/kafka-topics';
-import { SendEmailEvent } from '../events/send-email.event';
-import { KafkaMessage } from 'kafkajs';
-
-type CommitOffsetsMock = jest.Mock<Promise<void>, []>;
-type ConsumerMock = { commitOffsets: CommitOffsetsMock };
-
-function buildContext(
-  overrides: Partial<{
-    offset: string;
-    headers: Record<string, Buffer | string>;
-  }> = {},
-): jest.Mocked<KafkaContext> {
-  const message: Partial<KafkaMessage> = {
-    offset: overrides.offset ?? '0',
-    headers: overrides.headers ?? {},
-  };
-  const commitOffsets: CommitOffsetsMock = jest
-    .fn<Promise<void>, []>()
-    .mockResolvedValue(undefined);
-  return {
-    getMessage: jest.fn<Partial<KafkaMessage>, []>().mockReturnValue(message),
-    getTopic: jest.fn<string, []>().mockReturnValue(KAFKA_TOPICS.SEND_EMAIL),
-    getPartition: jest.fn<number, []>().mockReturnValue(0),
-    getConsumer: jest.fn<ConsumerMock, []>().mockReturnValue({ commitOffsets }),
-  } as unknown as jest.Mocked<KafkaContext>;
-}
+import { KAFKA_TOPICS, KafkaTopic } from '../../shared/kafka/kafka-topics';
+import { SendEmailEvent } from '../../shared/messaging/send-email.event';
+import {
+  buildKafkaContext,
+  ConsumerMock,
+} from '../../../test/helpers/kafka-context.fixture';
 
 describe('EmailConsumer', () => {
   let consumer: EmailConsumer;
@@ -49,7 +28,7 @@ describe('EmailConsumer', () => {
     };
     dlqProducer = {
       send: jest
-        .fn<Promise<void>, [string, unknown, Record<string, string>?]>()
+        .fn<Promise<void>, [KafkaTopic, unknown, Record<string, string>?]>()
         .mockResolvedValue(undefined),
     };
     consumer = new EmailConsumer(
@@ -58,8 +37,24 @@ describe('EmailConsumer', () => {
     );
   });
 
+  it('should send invalid payload directly to DLQ without retrying', async (): Promise<void> => {
+    const invalidPayload: SendEmailEvent = { to: '', subject: '', body: '' };
+    const context: jest.Mocked<KafkaContext> = buildKafkaContext();
+
+    await consumer.handle(invalidPayload, context);
+
+    expect(useCase.execute).not.toHaveBeenCalled();
+    expect(dlqProducer.send).toHaveBeenCalledWith(
+      KAFKA_TOPICS.SEND_EMAIL_DLQ,
+      invalidPayload,
+      expect.objectContaining({
+        'x-error': expect.stringContaining('Invalid payload') as string,
+      }),
+    );
+  });
+
   it('should call use case and commit offset on success', async (): Promise<void> => {
-    const context: jest.Mocked<KafkaContext> = buildContext();
+    const context: jest.Mocked<KafkaContext> = buildKafkaContext();
     await consumer.handle(payload, context);
 
     const { commitOffsets }: ConsumerMock =
@@ -74,7 +69,7 @@ describe('EmailConsumer', () => {
 
   it('should publish to retry topic on first failure', async (): Promise<void> => {
     useCase.execute.mockRejectedValueOnce(new Error('SMTP error'));
-    const context: jest.Mocked<KafkaContext> = buildContext({
+    const context: jest.Mocked<KafkaContext> = buildKafkaContext({
       headers: { 'x-retry-count': '0' },
     });
 
@@ -89,7 +84,7 @@ describe('EmailConsumer', () => {
 
   it('should publish to DLQ when max retries exceeded', async (): Promise<void> => {
     useCase.execute.mockRejectedValueOnce(new Error('SMTP error'));
-    const context: jest.Mocked<KafkaContext> = buildContext({
+    const context: jest.Mocked<KafkaContext> = buildKafkaContext({
       headers: { 'x-retry-count': '3' },
     });
 
@@ -104,7 +99,7 @@ describe('EmailConsumer', () => {
 
   it('should always commit offset even on failure', async (): Promise<void> => {
     useCase.execute.mockRejectedValueOnce(new Error('fail'));
-    const context: jest.Mocked<KafkaContext> = buildContext();
+    const context: jest.Mocked<KafkaContext> = buildKafkaContext();
 
     await consumer.handle(payload, context);
 

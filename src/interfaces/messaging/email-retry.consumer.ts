@@ -5,12 +5,15 @@ import {
   Ctx,
   KafkaContext,
 } from '@nestjs/microservices';
-
-import type { SendEmailEvent } from '../events/send-email.event';
+import type { SendEmailEvent } from '../../shared/messaging/send-email.event';
 import { KafkaDlqProducer } from '../../infrastructure/kafka/kafka-dlq.producer';
 import { SendEmailUseCase } from '../../application/use-cases/send-email.use-case';
 import { KAFKA_TOPICS } from '../../shared/kafka/kafka-topics';
 import { IHeaders, KafkaMessage } from 'kafkajs';
+import {
+  commitOffset,
+  isValidSendEmailPayload,
+} from '../../shared/kafka/kafka-consumer.utils';
 
 @Controller()
 export class EmailRetryConsumer {
@@ -23,16 +26,26 @@ export class EmailRetryConsumer {
 
   @EventPattern(KAFKA_TOPICS.SEND_EMAIL_RETRY)
   async handle(
-    @Payload()
-    payload: SendEmailEvent,
-    @Ctx()
-    context: KafkaContext,
+    @Payload() payload: SendEmailEvent,
+    @Ctx() context: KafkaContext,
   ): Promise<void> {
     const message: KafkaMessage = context.getMessage();
     const headers: IHeaders = message.headers ?? {};
     const retryCount: number = Number(
       headers['x-retry-count']?.toString() ?? 0,
     );
+
+    if (!isValidSendEmailPayload(payload)) {
+      this.logger.error(
+        `Invalid payload received on topic "${KAFKA_TOPICS.SEND_EMAIL_RETRY}". Sending to DLQ without retry.`,
+      );
+      await this.dlqProducer.send(KAFKA_TOPICS.SEND_EMAIL_DLQ, payload, {
+        'x-error': 'Invalid payload: missing or empty required fields',
+        'x-retry-count': String(retryCount),
+      });
+      await commitOffset(context, message);
+      return;
+    }
 
     this.logger.log(
       `Retrying email to "${payload.to}" (retry attempt ${retryCount})`,
@@ -50,13 +63,7 @@ export class EmailRetryConsumer {
         'x-retry-count': String(retryCount),
       });
     } finally {
-      await context.getConsumer().commitOffsets([
-        {
-          topic: context.getTopic(),
-          partition: context.getPartition(),
-          offset: (Number(message.offset) + 1).toString(),
-        },
-      ]);
+      await commitOffset(context, message);
     }
   }
 }

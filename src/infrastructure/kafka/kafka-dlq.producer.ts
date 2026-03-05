@@ -5,21 +5,18 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { Kafka, Producer } from 'kafkajs';
+import { AppConfigService } from '../../shared/config/app-config.service';
+import { KafkaTopic } from '../../shared/kafka/kafka-topics';
 
 @Injectable()
 export class KafkaDlqProducer implements OnModuleInit, OnModuleDestroy {
   private readonly logger: Logger = new Logger(KafkaDlqProducer.name);
   private readonly producer: Producer;
 
-  constructor() {
-    const brokers: string | undefined = process.env.KAFKA_BROKERS;
-    if (!brokers) {
-      throw new Error('KAFKA_BROKERS environment variable is required');
-    }
-
+  constructor(private readonly config: AppConfigService) {
     const kafka: Kafka = new Kafka({
-      clientId: process.env.KAFKA_CLIENT_ID ?? 'email-service-dlq',
-      brokers: brokers.split(',').map((b) => b.trim()),
+      clientId: this.config.kafkaClientId,
+      brokers: this.config.kafkaBrokers,
     });
 
     this.producer = kafka.producer();
@@ -36,10 +33,14 @@ export class KafkaDlqProducer implements OnModuleInit, OnModuleDestroy {
   }
 
   async send(
-    topic: string,
+    topic: KafkaTopic,
     payload: unknown,
     headers?: Record<string, string>,
   ): Promise<void> {
+    if (payload === null || payload === undefined) {
+      throw new Error('Kafka payload must not be null or undefined');
+    }
+
     await this.producer.send({
       topic,
       messages: [

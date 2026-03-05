@@ -33,19 +33,38 @@ describe('SendEmailUseCase', () => {
 
   it('should throw when the email address is invalid', async (): Promise<void> => {
     await expect(
-      useCase.execute({
-        to: 'not-an-email',
-        subject: 'Test',
-        body: 'body',
-      }),
+      useCase.execute({ to: 'not-an-email', subject: 'Test', body: 'body' }),
     ).rejects.toThrow('Invalid email address');
+
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it('should throw when "to" is empty', async (): Promise<void> => {
+    await expect(
+      useCase.execute({ to: '  ', subject: 'Test', body: 'body' }),
+    ).rejects.toThrow('Field "to" is required');
+
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it('should throw when "subject" is empty', async (): Promise<void> => {
+    await expect(
+      useCase.execute({ to: 'user@example.com', subject: '  ', body: 'body' }),
+    ).rejects.toThrow('Field "subject" is required');
+
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it('should throw when "body" is empty', async (): Promise<void> => {
+    await expect(
+      useCase.execute({ to: 'user@example.com', subject: 'Test', body: '  ' }),
+    ).rejects.toThrow('Field "body" is required');
 
     expect(sendMock).not.toHaveBeenCalled();
   });
 
   it('should propagate errors thrown by emailSender.send', async (): Promise<void> => {
     sendMock.mockRejectedValueOnce(new Error('SMTP error'));
-
     await expect(
       useCase.execute({
         to: 'user@example.com',

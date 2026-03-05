@@ -1,6 +1,6 @@
 import { Controller, Logger } from '@nestjs/common';
 import { SendEmailUseCase } from '../../application/use-cases/send-email.use-case';
-import type { SendEmailEvent } from '../events/send-email.event';
+import type { SendEmailEvent } from '../../shared/messaging/send-email.event';
 import {
   Ctx,
   EventPattern,
@@ -10,6 +10,10 @@ import {
 import { IHeaders, KafkaMessage } from 'kafkajs';
 import { KAFKA_TOPICS } from '../../shared/kafka/kafka-topics';
 import { KafkaDlqProducer } from '../../infrastructure/kafka/kafka-dlq.producer';
+import {
+  commitOffset,
+  isValidSendEmailPayload,
+} from '../../shared/kafka/kafka-consumer.utils';
 
 @Controller()
 export class EmailConsumer {
@@ -23,17 +27,25 @@ export class EmailConsumer {
 
   @EventPattern(KAFKA_TOPICS.SEND_EMAIL)
   async handle(
-    @Payload()
-    payload: SendEmailEvent,
-    @Ctx()
-    context: KafkaContext,
+    @Payload() payload: SendEmailEvent,
+    @Ctx() context: KafkaContext,
   ): Promise<void> {
     const message: KafkaMessage = context.getMessage();
     const headers: IHeaders = message.headers ?? {};
-
     const retryCount: number = Number(
       headers['x-retry-count']?.toString() ?? 0,
     );
+
+    if (!isValidSendEmailPayload(payload)) {
+      this.logger.error(
+        `Invalid payload received on topic "${KAFKA_TOPICS.SEND_EMAIL}". Sending to DLQ without retry.`,
+      );
+      await this.dlqProducer.send(KAFKA_TOPICS.SEND_EMAIL_DLQ, payload, {
+        'x-error': 'Invalid payload: missing or empty required fields',
+      });
+      await commitOffset(context, message);
+      return;
+    }
 
     this.logger.log(
       `Processing email to "${payload.to}" (attempt ${retryCount + 1}/${this.MAX_RETRIES + 1})`,
@@ -60,20 +72,7 @@ export class EmailConsumer {
         });
       }
     } finally {
-      await this.commitOffset(context, message);
+      await commitOffset(context, message);
     }
-  }
-
-  private async commitOffset(
-    context: KafkaContext,
-    message: KafkaMessage,
-  ): Promise<void> {
-    await context.getConsumer().commitOffsets([
-      {
-        topic: context.getTopic(),
-        partition: context.getPartition(),
-        offset: (Number(message.offset) + 1).toString(),
-      },
-    ]);
   }
 }
