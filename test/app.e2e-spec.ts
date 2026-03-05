@@ -1,25 +1,35 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
-import request from 'supertest';
-import { App } from 'supertest/types';
+import { INestMicroservice } from '@nestjs/common';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
 import { AppModule } from '../src/app.module';
 
-describe('AppController (e2e)', () => {
-  let app: INestApplication<App>;
+describe('Email Microservice (e2e)', () => {
+  let app: INestMicroservice;
 
-  beforeEach(async () => {
+  beforeAll(async (): Promise<void> => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
 
-    app = moduleFixture.createNestApplication();
-    await app.init();
+    app = moduleFixture.createNestMicroservice<MicroserviceOptions>({
+      transport: Transport.KAFKA,
+      options: {
+        client: {
+          clientId: 'email-service-test',
+          brokers: ['localhost:9092'],
+        },
+        consumer: {
+          groupId: 'email-service-test-group',
+        },
+      },
+    });
   });
 
-  it('/ (GET)', () => {
-    return request(app.getHttpServer())
-      .get('/')
-      .expect(200)
-      .expect('Hello World!');
+  afterAll(async (): Promise<void> => {
+    await app?.close();
+  });
+
+  it('should compile the module without errors', (): void => {
+    expect(app).toBeDefined();
   });
 });

@@ -1,4 +1,4 @@
-import { Controller } from '@nestjs/common';
+import { Controller, Logger } from '@nestjs/common';
 import { SendEmailUseCase } from '../../application/use-cases/send-email.use-case';
 import type { SendEmailEvent } from '../events/send-email.event';
 import {
@@ -13,8 +13,8 @@ import { KafkaDlqProducer } from '../../infrastructure/kafka/kafka-dlq.producer'
 
 @Controller()
 export class EmailConsumer {
-  private readonly MAX_RETRIES = 3;
-  private readonly RETRY_DELAY_MS = 3000;
+  private readonly MAX_RETRIES: number = 3;
+  private readonly logger: Logger = new Logger(EmailConsumer.name);
 
   constructor(
     private readonly sendEmailUseCase: SendEmailUseCase,
@@ -35,39 +35,45 @@ export class EmailConsumer {
       headers['x-retry-count']?.toString() ?? 0,
     );
 
+    this.logger.log(
+      `Processing email to "${payload.to}" (attempt ${retryCount + 1}/${this.MAX_RETRIES + 1})`,
+    );
+
     try {
       await this.sendEmailUseCase.execute(payload);
-      await context.getConsumer().commitOffsets([
-        {
-          topic: context.getTopic(),
-          partition: context.getPartition(),
-          offset: (Number(message.offset) + 1).toString(),
-        },
-      ]);
+      this.logger.log(`Email successfully sent to "${payload.to}"`);
     } catch (error: unknown) {
       if (retryCount < this.MAX_RETRIES) {
-        await this.delay(this.RETRY_DELAY_MS);
+        this.logger.warn(
+          `Failed to send email to "${payload.to}". Scheduling retry ${retryCount + 1}/${this.MAX_RETRIES}.`,
+        );
         await this.dlqProducer.send(KAFKA_TOPICS.SEND_EMAIL_RETRY, payload, {
           'x-retry-count': String(retryCount + 1),
           'x-original-topic': KAFKA_TOPICS.SEND_EMAIL,
         });
       } else {
+        this.logger.error(
+          `Max retries reached for email to "${payload.to}". Sending to DLQ. Error: ${error instanceof Error ? error.message : String(error)}`,
+        );
         await this.dlqProducer.send(KAFKA_TOPICS.SEND_EMAIL_DLQ, payload, {
-          'x-error': (error as Error).message,
+          'x-error': error instanceof Error ? error.message : String(error),
         });
       }
-
-      await context.getConsumer().commitOffsets([
-        {
-          topic: context.getTopic(),
-          partition: context.getPartition(),
-          offset: (Number(message.offset) + 1).toString(),
-        },
-      ]);
+    } finally {
+      await this.commitOffset(context, message);
     }
   }
 
-  private async delay(ms: number): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, ms));
+  private async commitOffset(
+    context: KafkaContext,
+    message: KafkaMessage,
+  ): Promise<void> {
+    await context.getConsumer().commitOffsets([
+      {
+        topic: context.getTopic(),
+        partition: context.getPartition(),
+        offset: (Number(message.offset) + 1).toString(),
+      },
+    ]);
   }
 }

@@ -7,11 +7,16 @@ import { KafkaDlqProducer } from './infrastructure/kafka/kafka-dlq.producer';
 import { MailConfig } from './infrastructure/mail/mail-config.interface';
 import { SmtpEmailAdapter } from './infrastructure/mail/smtp-email.adapter';
 import { EMAIL_SENDER } from './domain/ports/email-sender.token';
+import { AppProfile } from './shared/enums/app-profile.enum';
+
+const profile: AppProfile =
+  (process.env.NODE_ENV as AppProfile) ?? AppProfile.Development;
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: `.env.${profile}`,
     }),
   ],
   controllers: [EmailConsumer, EmailRetryConsumer],
@@ -21,7 +26,7 @@ import { EMAIL_SENDER } from './domain/ports/email-sender.token';
       provide: 'MAIL_CONFIG',
       useFactory: (configService: ConfigService): MailConfig => ({
         host: configService.getOrThrow<string>('MAIL_HOST'),
-        port: configService.getOrThrow<number>('MAIL_PORT'),
+        port: parseInt(configService.getOrThrow<string>('MAIL_PORT'), 10),
         user: configService.getOrThrow<string>('MAIL_USER'),
         pass: configService.getOrThrow<string>('MAIL_PASS'),
         from: configService.getOrThrow<string>('MAIL_FROM'),

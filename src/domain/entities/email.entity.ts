@@ -5,5 +5,6 @@ export class Email {
     readonly to: EmailAddress,
     readonly subject: string,
     readonly body: string,
+    readonly bodyText?: string,
   ) {}
 }
