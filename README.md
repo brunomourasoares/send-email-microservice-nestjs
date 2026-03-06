@@ -1,4 +1,4 @@
-# Email Microservice (NestJS + Kafka + Nodemailer)
+# Email Microservice (NestJS + Kafka + Nodemailer + Docker)
 
 Microserviço de envio de emails **event-driven**, construído com **NestJS**, **Apache Kafka** e **Nodemailer**.
 
